@@ -1,0 +1,10 @@
+{
+  "/_not-found/page": "app/_not-found/page.js",
+  "/monitoring/page": "app/monitoring/page.js",
+  "/generate/page": "app/generate/page.js",
+  "/intelligence/page": "app/intelligence/page.js",
+  "/orchestrator/page": "app/orchestrator/page.js",
+  "/research/page": "app/research/page.js",
+  "/publish/page": "app/publish/page.js",
+  "/page": "app/page.js"
+}

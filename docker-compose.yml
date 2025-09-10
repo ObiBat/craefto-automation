@@ -25,6 +25,23 @@ services:
     networks:
       - craefto-network
 
+  # Frontend Next.js
+  frontend:
+    build:
+      context: ./frontend
+    command: npm run dev
+    environment:
+      - NEXT_PUBLIC_API_BASE_URL=http://craefto-app:8000
+    volumes:
+      - ./frontend:/usr/src/app
+    working_dir: /usr/src/app
+    ports:
+      - "3000:3000"
+    depends_on:
+      - craefto-app
+    networks:
+      - craefto-network
+
   # PostgreSQL database
   postgres:
     image: postgres:15-alpine
@@ -101,6 +118,7 @@ services:
       - ./nginx/ssl:/etc/nginx/ssl
     depends_on:
       - craefto-app
+      - frontend
     networks:
       - craefto-network
 
