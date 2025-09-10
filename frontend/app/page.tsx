@@ -2,6 +2,10 @@
 
 import Link from "next/link"
 import { useEffect, useState } from "react"
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Skeleton } from "@/components/ui/skeleton"
+import { toast } from "@/components/ui/toast"
 
 export default function Home() {
   const [status, setStatus] = useState<any>(null)
@@ -18,12 +22,22 @@ export default function Home() {
         setStatus(json)
       } catch (e: any) {
         setError(e?.message || "Failed to load status")
+        toast({ title: "Failed to load", description: e?.message, variant: 'destructive' })
       } finally {
         setLoading(false)
       }
     }
     load()
   }, [])
+
+  const cards = [
+    { href: "/research", title: "Research", desc: "Find trends and competitor intel" },
+    { href: "/generate", title: "Generate", desc: "Create content and visuals" },
+    { href: "/publish", title: "Publish", desc: "Schedule and cross-post" },
+    { href: "/orchestrator", title: "Orchestrator", desc: "Run sprints and GTM tests" },
+    { href: "/monitoring", title: "Monitoring", desc: "Health, cost, errors" },
+    { href: "/intelligence", title: "Intelligence", desc: "Insights and reports" },
+  ]
 
   return (
     <main className="container py-10 space-y-8">
@@ -33,34 +47,34 @@ export default function Home() {
       </header>
 
       <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {[
-          { href: "/research", title: "Research", desc: "Find trends and competitor intel" },
-          { href: "/generate", title: "Generate", desc: "Create content and visuals" },
-          { href: "/publish", title: "Publish", desc: "Schedule and cross-post" },
-          { href: "/orchestrator", title: "Orchestrator", desc: "Run sprints and GTM tests" },
-          { href: "/monitoring", title: "Monitoring", desc: "Health, cost, errors" },
-          { href: "/intelligence", title: "Intelligence", desc: "Insights and reports" },
-        ].map((card) => (
-          <Link key={card.href} href={card.href} className="group rounded-lg border p-5 hover:shadow-sm transition">
-            <div className="flex items-center justify-between">
-              <h3 className="font-medium">{card.title}</h3>
-              <span className="text-primary group-hover:translate-x-0.5 transition">→</span>
-            </div>
-            <p className="text-sm text-muted-foreground mt-1">{card.desc}</p>
-          </Link>
+        {cards.map((card) => (
+          <Card key={card.href} className="hover:shadow-sm transition">
+            <CardHeader>
+              <CardTitle>{card.title}</CardTitle>
+              <CardDescription>{card.desc}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Link href={card.href}>
+                <Button>Open</Button>
+              </Link>
+            </CardContent>
+          </Card>
         ))}
       </section>
 
-      <section className="rounded-lg border p-5">
-        <div className="flex items-center justify-between">
-          <h2 className="font-medium">Backend status</h2>
-          {loading && <div className="animate-pulse text-sm text-muted-foreground">Loading…</div>}
-        </div>
-        {error && <p className="text-sm text-destructive mt-2">{error}</p>}
-        {!error && status && (
-          <pre className="mt-3 text-xs overflow-auto bg-muted p-3 rounded">{JSON.stringify(status, null, 2)}</pre>
-        )}
-      </section>
+      <Card>
+        <CardHeader className="flex-row items-center justify-between">
+          <CardTitle>Backend status</CardTitle>
+          <Button variant="outline" onClick={() => window.location.reload()}>Refresh</Button>
+        </CardHeader>
+        <CardContent>
+          {loading && <Skeleton className="h-6 w-48" />}
+          {error && <p className="text-sm text-destructive mt-2">{error}</p>}
+          {!error && status && (
+            <pre className="mt-3 text-xs overflow-auto bg-muted p-3 rounded">{JSON.stringify(status, null, 2)}</pre>
+          )}
+        </CardContent>
+      </Card>
     </main>
   )
 }

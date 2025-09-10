@@ -12,6 +12,7 @@
     "postinstall": "playwright install --with-deps"
   },
   "dependencies": {
+    "class-variance-authority": "^0.7.1",
     "clsx": "2.1.1",
     "next": "14.2.8",
     "react": "18.3.1",

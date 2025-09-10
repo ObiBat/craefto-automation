@@ -1,6 +1,10 @@
 "use client"
 
 import { useState } from "react"
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Skeleton } from "@/components/ui/skeleton"
+import { toast } from "@/components/ui/toast"
 
 export default function PublishPage() {
   const [resp, setResp] = useState<any>(null)
@@ -19,8 +23,10 @@ export default function PublishPage() {
       })
       const json = await res.json()
       setResp(json)
+      toast({ title: "Batch scheduled", description: "Publishing flow executed." })
     } catch (e: any) {
       setError(e?.message || "Failed")
+      toast({ title: "Publish failed", description: e?.message, variant: 'destructive' })
     } finally {
       setLoading(false)
     }
@@ -28,12 +34,20 @@ export default function PublishPage() {
 
   return (
     <main className="container py-10 space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Publish</h1>
-        <button onClick={run} className="rounded-md bg-primary px-4 py-2 text-white">{loading ? 'Working…' : 'Run Batch'}</button>
-      </div>
-      {error && <p className="text-sm text-destructive">{error}</p>}
-      {resp && <pre className="text-xs bg-muted p-3 rounded overflow-auto">{JSON.stringify(resp, null, 2)}</pre>}
+      <Card>
+        <CardHeader className="flex-row items-center justify-between">
+          <div>
+            <CardTitle>Publish</CardTitle>
+            <CardDescription>Batch publish to platforms</CardDescription>
+          </div>
+          <Button onClick={run} disabled={loading}>{loading ? 'Working…' : 'Run Batch'}</Button>
+        </CardHeader>
+        <CardContent>
+          {loading && <Skeleton className="h-6 w-64" />}
+          {error && <p className="text-sm text-destructive">{error}</p>}
+          {resp && <pre className="text-xs bg-muted p-3 rounded overflow-auto">{JSON.stringify(resp, null, 2)}</pre>}
+        </CardContent>
+      </Card>
     </main>
   )
 }
