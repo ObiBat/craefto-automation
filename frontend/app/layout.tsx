@@ -1,6 +1,7 @@
 import "./globals.css"
 import type { Metadata } from "next"
 import { Toaster } from "@/components/ui/toast"
+import Navbar from "@/components/navbar"
 
 export const metadata: Metadata = {
   title: "CRAEFTO Automation Dashboard",
@@ -15,7 +16,8 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body className="min-h-screen bg-background text-foreground antialiased">
-        {children}
+        <Navbar />
+        <div className="pt-6">{children}</div>
         <Toaster />
       </body>
     </html>
