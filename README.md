@@ -12,7 +12,7 @@ An enterprise-grade content automation platform that generates, optimizes, and p
 ### 🤖 AI-Powered Content Generation
 - **Research Agent**: Analyzes trending topics across Twitter, Reddit, ProductHunt, and Google Trends
 - **Content Generator**: Creates blog posts, social media content, and email campaigns with brand consistency
-- **Visual Generator**: Generates blog heroes, social graphics, and OG images with Midjourney and Pillow fallbacks
+- **Visual Generator**: Generates blog heroes, social graphics, and OG images with Replicate and Pillow fallbacks
 - **Publisher Agent**: Automated publishing to Twitter, LinkedIn, and email platforms
 - **Intelligence Agent**: Performance analytics, competitor tracking, and virality prediction
 
@@ -69,7 +69,9 @@ Required API keys:
 - `TWITTER_API_KEY` & `TWITTER_API_SECRET`: For Twitter publishing
 - `LINKEDIN_CLIENT_ID` & `LINKEDIN_CLIENT_SECRET`: For LinkedIn publishing
 - `CONVERTKIT_API_KEY`: For email campaigns
-- `MIDJOURNEY_WEBHOOK_URL`: For image generation
+- `REPLICATE_API_TOKEN`: For image generation
+- `REPLICATE_MODEL`: Replicate model name (e.g., stability-ai/sdxl)
+- `REPLICATE_MODEL_VERSION`: Optional fixed model version for deterministic runs
 
 ### 4. Run with Docker (Recommended)
 ```bash
@@ -221,7 +223,7 @@ pytest tests/test_automation.py::TestCraeftoAutomation::test_performance_limits 
 ### Tech Stack
 - **Backend**: FastAPI, Python 3.12, Pydantic
 - **Database**: Supabase (PostgreSQL), Redis (caching)
-- **AI APIs**: OpenAI GPT-4, Anthropic Claude, Midjourney
+- **AI APIs**: OpenAI GPT-4, Anthropic Claude, Replicate
 - **Social APIs**: Twitter API v2, LinkedIn API, ConvertKit
 - **Monitoring**: Prometheus, Grafana, Custom health checks
 - **Testing**: Pytest, Coverage.py, Bandit security scanning
@@ -260,7 +262,9 @@ LINKEDIN_CLIENT_SECRET=...
 
 # Additional Services
 CONVERTKIT_API_KEY=...
-MIDJOURNEY_WEBHOOK_URL=...
+REPLICATE_API_TOKEN=...
+REPLICATE_MODEL=stability-ai/sdxl
+REPLICATE_MODEL_VERSION=
 MAKE_WEBHOOK_SECRET=...
 ```
 

@@ -13,15 +13,23 @@
   --card-foreground: 240 10% 3.9%;
   --border: 240 5.9% 90%;
   --input: 240 5.9% 90%;
-  --primary: 252 82% 53%; /* Craefto blue */
+  --primary: 240 5.9% 10%; /* Professional dark for primary actions */
   --primary-foreground: 0 0% 100%;
   --secondary: 240 4.8% 95.9%;
   --secondary-foreground: 240 5.9% 10%;
-  --accent: 267 82% 60%; /* Craefto violet */
-  --accent-foreground: 0 0% 100%;
+  --accent: 240 4.8% 95.9%; /* Neutral accent */
+  --accent-foreground: 240 5.9% 10%;
   --destructive: 0 84.2% 60.2%;
   --destructive-foreground: 0 0% 100%;
-  --ring: 252 82% 53%;
+  --ring: 240 5.9% 10%;
+  
+  /* Semantic Status Colors */
+  --success: 142 76% 36%; /* Green for healthy/live */
+  --success-foreground: 0 0% 100%;
+  --warning: 38 92% 50%; /* Orange for beta/in-progress */
+  --warning-foreground: 0 0% 100%;
+  --info: 221 83% 53%; /* Blue for informational */
+  --info-foreground: 0 0% 100%;
   --radius: 0.6rem;
 }
 
@@ -36,15 +44,23 @@
   --card-foreground: 0 0% 98%;
   --border: 240 3.7% 15.9%;
   --input: 240 3.7% 15.9%;
-  --primary: 252 82% 60%;
-  --primary-foreground: 0 0% 98%;
+  --primary: 0 0% 98%; /* Light primary for dark mode */
+  --primary-foreground: 240 10% 3.9%;
   --secondary: 240 3.7% 15.9%;
   --secondary-foreground: 0 0% 98%;
-  --accent: 267 82% 66%;
+  --accent: 240 3.7% 15.9%; /* Neutral accent for dark mode */
   --accent-foreground: 0 0% 98%;
   --destructive: 0 62.8% 30.6%;
   --destructive-foreground: 0 0% 98%;
-  --ring: 252 82% 60%;
+  --ring: 0 0% 98%;
+  
+  /* Semantic Status Colors for Dark Mode */
+  --success: 142 71% 45%; /* Green for healthy/live */
+  --success-foreground: 0 0% 98%;
+  --warning: 38 92% 60%; /* Orange for beta/in-progress */
+  --warning-foreground: 0 0% 98%;
+  --info: 221 83% 63%; /* Blue for informational */
+  --info-foreground: 0 0% 98%;
 }
 
 @layer base {
@@ -53,5 +69,51 @@
   }
   body {
     @apply bg-background text-foreground;
+  }
+}
+
+@layer utilities {
+  /* Semantic Status Utility Classes */
+  .bg-success {
+    background-color: hsl(var(--success));
+  }
+  .text-success {
+    color: hsl(var(--success));
+  }
+  .bg-warning {
+    background-color: hsl(var(--warning));
+  }
+  .text-warning {
+    color: hsl(var(--warning));
+  }
+  .bg-info {
+    background-color: hsl(var(--info));
+  }
+  .text-info {
+    color: hsl(var(--info));
+  }
+  .border-success {
+    border-color: hsl(var(--success));
+  }
+  .border-warning {
+    border-color: hsl(var(--warning));
+  }
+  .border-info {
+    border-color: hsl(var(--info));
+  }
+}
+
+/* Custom animations */
+@keyframes glow-sweep {
+  0% {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(100%);
+    opacity: 0;
   }
 }

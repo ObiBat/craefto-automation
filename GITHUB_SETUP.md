@@ -50,7 +50,7 @@ DOCKERHUB_TOKEN            # Docker Hub access token
 ```bash
 OPENAI_API_KEY             # OpenAI GPT-4 API key
 ANTHROPIC_API_KEY          # Anthropic Claude API key
-MIDJOURNEY_WEBHOOK_URL     # Midjourney image generation webhook
+REPLICATE_API_TOKEN        # Replicate API token for image generation
 ```
 
 #### Database & Storage

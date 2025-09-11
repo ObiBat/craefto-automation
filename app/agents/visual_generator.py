@@ -1,6 +1,6 @@
 """
 Visual Generator Agent for CRAEFTO Automation System
-Creates branded visual content using Midjourney AI and Pillow fallbacks
+Creates branded visual content using Replicate (image models) and Pillow fallbacks
 """
 import asyncio
 import logging
@@ -29,26 +29,26 @@ from app.config import get_settings
 # Configure logging
 logger = logging.getLogger(__name__)
 
-class MidjourneyClient:
+class ReplicateClient:
     """
-    Client for interacting with Midjourney via Discord bot or webhook proxy
+    Minimal Replicate client for image generation via HTTPS
     """
-    
-    def __init__(self, webhook_url: Optional[str] = None):
-        self.webhook_url = webhook_url
+    def __init__(self, api_token: Optional[str], model: str, version: Optional[str] = None):
+        self.api_token = api_token
+        self.model = model
+        self.version = version
         self.session: Optional[aiohttp.ClientSession] = None
-        
-        # Midjourney command parameters
-        self.default_params = {
-            "aspect_ratio": "16:9",
-            "quality": "1",
-            "stylize": "100",
-            "chaos": "0"
-        }
     
     async def __aenter__(self):
         """Async context manager entry"""
+        import ssl
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+        
+        connector = aiohttp.TCPConnector(ssl=ssl_context)
         self.session = aiohttp.ClientSession(
+            connector=connector,
             timeout=aiohttp.ClientTimeout(total=300)  # 5 minute timeout for AI generation
         )
         return self
@@ -58,128 +58,62 @@ class MidjourneyClient:
         if self.session:
             await self.session.close()
     
-    async def imagine(self, prompt: str, **params) -> Dict[str, Any]:
-        """
-        Submit imagine request to Midjourney
-        
-        Args:
-            prompt: Text prompt for image generation
-            **params: Additional Midjourney parameters
-            
-        Returns:
-            Generation result with image URLs or error info
-        """
-        if not self.webhook_url:
-            logger.warning("⚠️ Midjourney webhook URL not configured")
-            return {"success": False, "error": "No webhook URL configured"}
-        
+    async def imagine(self, prompt: str, width: int = 1024, height: int = 1024, **params) -> Dict[str, Any]:
+        if not self.api_token:
+            logger.warning("⚠️ Replicate API token not configured")
+            return {"success": False, "error": "No Replicate token configured"}
+
         try:
-            # Merge parameters
-            generation_params = {**self.default_params, **params}
-            
-            # Format Midjourney command
-            mj_params = []
-            if generation_params.get("aspect_ratio"):
-                mj_params.append(f"--ar {generation_params['aspect_ratio']}")
-            if generation_params.get("quality"):
-                mj_params.append(f"--q {generation_params['quality']}")
-            if generation_params.get("stylize"):
-                mj_params.append(f"--s {generation_params['stylize']}")
-            if generation_params.get("chaos"):
-                mj_params.append(f"--c {generation_params['chaos']}")
-            
-            full_prompt = f"{prompt} {' '.join(mj_params)}"
-            
-            logger.info(f"🎨 Submitting Midjourney request: {prompt[:50]}...")
-            
-            # Submit to webhook
-            payload = {
-                "type": "imagine",
-                "prompt": full_prompt,
-                "callback_url": None  # For async processing
+            headers = {"Authorization": f"Token {self.api_token}", "Content-Type": "application/json"}
+            body = {
+                "input": {
+                    "prompt": prompt,
+                    "width": width,
+                    "height": height,
+                    **params,
+                }
             }
-            
-            async with self.session.post(self.webhook_url, json=payload) as response:
-                if response.status == 200:
-                    result = await response.json()
-                    logger.info(f"✅ Midjourney request submitted successfully")
-                    return {
-                        "success": True,
-                        "task_id": result.get("task_id"),
-                        "status": "submitted",
-                        "prompt": prompt
-                    }
+            logger.info(f"🎨 Submitting Replicate request: {prompt[:50]}...")
+            url = f"https://api.replicate.com/v1/models/{self.model}/predictions"
+            async with self.session.post(url, headers=headers, json=body) as resp:
+                if resp.status in (200, 201):
+                    data = await resp.json()
+                    return {"success": True, "id": data.get("id"), "status": data.get("status")}
                 else:
-                    error_text = await response.text()
-                    logger.error(f"❌ Midjourney request failed: {response.status} - {error_text}")
-                    return {
-                        "success": False,
-                        "error": f"HTTP {response.status}: {error_text}"
-                    }
-                    
+                    txt = await resp.text()
+                    logger.error(f"❌ Replicate request failed: {resp.status} - {txt}")
+                    return {"success": False, "error": f"HTTP {resp.status}: {txt}"}
         except Exception as e:
-            logger.error(f"❌ Midjourney client error: {str(e)}")
-            return {
-                "success": False,
-                "error": str(e)
-            }
+            logger.error(f"❌ Replicate client error: {str(e)}")
+            return {"success": False, "error": str(e)}
     
-    async def get_result(self, task_id: str, timeout: int = 180) -> Dict[str, Any]:
-        """
-        Poll for Midjourney generation result
-        
-        Args:
-            task_id: Task ID from imagine request
-            timeout: Maximum wait time in seconds
-            
-        Returns:
-            Final result with image URLs
-        """
-        if not self.webhook_url:
-            return {"success": False, "error": "No webhook URL configured"}
-        
+    async def get_result(self, prediction_id: str, timeout: int = 180) -> Dict[str, Any]:
+        if not self.api_token:
+            return {"success": False, "error": "No Replicate token configured"}
+
+        headers = {"Authorization": f"Token {self.api_token}"}
         start_time = datetime.utcnow()
-        poll_interval = 10  # Poll every 10 seconds
-        
+        poll_interval = 4
+
+        status_url = f"https://api.replicate.com/v1/predictions/{prediction_id}"
         while (datetime.utcnow() - start_time).seconds < timeout:
             try:
-                status_url = f"{self.webhook_url}/status/{task_id}"
-                
-                async with self.session.get(status_url) as response:
-                    if response.status == 200:
-                        result = await response.json()
-                        
-                        if result.get("status") == "completed":
-                            logger.info(f"✅ Midjourney generation completed: {task_id}")
-                            return {
-                                "success": True,
-                                "images": result.get("images", []),
-                                "task_id": task_id,
-                                "generation_time": result.get("generation_time")
-                            }
-                        elif result.get("status") == "failed":
-                            logger.error(f"❌ Midjourney generation failed: {task_id}")
-                            return {
-                                "success": False,
-                                "error": result.get("error", "Generation failed")
-                            }
-                        else:
-                            # Still processing
-                            logger.debug(f"⏳ Midjourney still processing: {task_id}")
-                            await asyncio.sleep(poll_interval)
-                    else:
-                        logger.warning(f"⚠️ Status check failed: {response.status}")
+                async with self.session.get(status_url, headers=headers) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        st = data.get("status")
+                        if st == "succeeded":
+                            output = data.get("output") or []
+                            images = output if isinstance(output, list) else [output]
+                            return {"success": True, "images": images}
+                        if st in ("failed", "canceled"):
+                            return {"success": False, "error": st}
                         await asyncio.sleep(poll_interval)
-                        
-            except Exception as e:
-                logger.warning(f"⚠️ Status check error: {str(e)}")
+                    else:
+                        await asyncio.sleep(poll_interval)
+            except Exception:
                 await asyncio.sleep(poll_interval)
-        
-        logger.warning(f"⏰ Midjourney generation timeout: {task_id}")
-        return {
-            "success": False,
-            "error": "Generation timeout"
-        }
+        return {"success": False, "error": "Generation timeout"}
 
 class VisualGenerator:
     """
@@ -189,7 +123,11 @@ class VisualGenerator:
     
     def __init__(self):
         self.settings = get_settings()
-        self.midjourney = MidjourneyClient(webhook_url=self.settings.midjourney_webhook)
+        self.replicate = ReplicateClient(
+            api_token=self.settings.replicate_api_token,
+            model=self.settings.replicate_model,
+            version=self.settings.replicate_model_version or None,
+        )
         
         # Visual cache for optimization
         self.visual_cache = {}
@@ -227,13 +165,13 @@ class VisualGenerator:
             "instagram": {"width": 1080, "height": 1080, "format": "PNG"},
             "facebook": {"width": 1200, "height": 630, "format": "PNG"},
             "og_image": {"width": 1200, "height": 630, "format": "PNG"},
-            "blog_hero": {"width": 1200, "height": 600, "format": "PNG"},
+            "blog_hero": {"width": 1024, "height": 1024, "format": "PNG"},
             "email_banner": {"width": 600, "height": 200, "format": "PNG"}
         }
     
     async def generate_blog_hero(self, title: str, style: str = "minimal SaaS") -> Dict[str, Any]:
         """
-        Generate hero image for blog posts using Midjourney with Pillow fallback
+        Generate hero image using Replicate with Pillow fallback
         
         Args:
             title: Blog post title
@@ -253,31 +191,30 @@ class VisualGenerator:
                     logger.info("📋 Using cached blog hero")
                     return cached_visual['content']
             
-            # Create Midjourney prompt
-            mj_prompt = self._create_blog_hero_prompt(title, style)
+            # Create prompt
+            prompt = self._create_blog_hero_prompt(title, style)
             
-            # Try Midjourney generation
-            async with self.midjourney as mj:
-                generation_result = await mj.imagine(
-                    mj_prompt,
-                    aspect_ratio="2:1",
-                    quality="1",
-                    stylize="150"
+            # Try Replicate generation
+            async with self.replicate as rep:
+                generation_result = await rep.imagine(
+                    prompt,
+                    width=self.platform_specs["blog_hero"]["width"],
+                    height=self.platform_specs["blog_hero"]["height"],
                 )
                 
                 if generation_result.get("success"):
                     # Wait for completion
-                    final_result = await mj.get_result(generation_result["task_id"])
+                    final_result = await rep.get_result(generation_result["id"])
                     
                     if final_result.get("success") and final_result.get("images"):
                         hero_data = {
                             "success": True,
-                            "source": "midjourney",
+                            "source": "replicate",
                             "images": final_result["images"],
                             "primary_url": final_result["images"][0],
                             "alt_text": f"Hero image for {title}",
                             "dimensions": self.platform_specs["blog_hero"],
-                            "prompt": mj_prompt,
+                            "prompt": prompt,
                             "generation_time": final_result.get("generation_time"),
                             "metadata": {
                                 "title": title,
@@ -293,10 +230,10 @@ class VisualGenerator:
                             "timestamp": datetime.utcnow()
                         }
                         
-                        logger.info(f"✅ Blog hero generated via Midjourney")
+                        logger.info(f"✅ Blog hero generated via Replicate")
                         return hero_data
             
-            # Fallback to Pillow if Midjourney fails
+            # Fallback to Pillow if Replicate fails
             logger.info("🔄 Falling back to Pillow for blog hero")
             return await self._create_pillow_blog_hero(title, style)
             
@@ -329,23 +266,20 @@ class VisualGenerator:
             # Get platform specifications
             specs = self.platform_specs.get(platform, self.platform_specs["twitter"])
             
-            # Try Midjourney for background
+            # Try Replicate for background
             background_result = None
             try:
-                async with self.midjourney as mj:
+                async with self.replicate as rep:
                     bg_prompt = self._create_social_background_prompt(platform)
-                    
-                    generation_result = await mj.imagine(
+                    generation_result = await rep.imagine(
                         bg_prompt,
-                        aspect_ratio=f"{specs['width']}:{specs['height']}",
-                        quality="1",
-                        stylize="100"
+                        width=specs['width'],
+                        height=specs['height'],
                     )
-                    
                     if generation_result.get("success"):
-                        background_result = await mj.get_result(generation_result["task_id"], timeout=120)
+                        background_result = await rep.get_result(generation_result["id"], timeout=120)
             except Exception as e:
-                logger.warning(f"⚠️ Midjourney background generation failed: {str(e)}")
+                logger.warning(f"⚠️ Replicate background generation failed: {str(e)}")
             
             # Create final graphic with Pillow (with or without AI background)
             graphic_data = await self._create_social_graphic_pillow(
@@ -492,7 +426,7 @@ class VisualGenerator:
     # Private helper methods
     
     def _create_blog_hero_prompt(self, title: str, style: str) -> str:
-        """Create optimized Midjourney prompt for blog hero"""
+        """Create optimized prompt for blog hero"""
         # Extract key concepts from title
         key_concepts = self._extract_key_concepts(title)
         
@@ -522,7 +456,7 @@ class VisualGenerator:
         return full_prompt
     
     def _create_social_background_prompt(self, platform: str) -> str:
-        """Create Midjourney prompt for social media background"""
+        """Create prompt for social media background"""
         prompts = {
             "twitter": "abstract minimal background, geometric shapes, twitter blue accent, modern tech aesthetic",
             "linkedin": "professional abstract background, business-focused, clean lines, corporate blue tones",

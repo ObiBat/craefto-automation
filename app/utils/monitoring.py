@@ -124,7 +124,6 @@ class CraeftoMonitor:
         self.api_fallbacks = {
             "openai": ["anthropic", "cached_content"],
             "anthropic": ["openai", "cached_content"],
-            "midjourney": ["replicate", "pillow_fallback"],
             "replicate": ["pillow_fallback"],
             "twitter": ["manual_queue"],
             "linkedin": ["manual_queue"],
@@ -135,7 +134,6 @@ class CraeftoMonitor:
         self.api_cost_rates = {
             "openai_gpt4": 0.03,  # per 1k tokens
             "anthropic_claude": 0.008,  # per 1k tokens
-            "midjourney": 0.10,  # per image
             "replicate": 0.05,  # per image
             "twitter_api": 0.001,  # per request
             "linkedin_api": 0.001,  # per request

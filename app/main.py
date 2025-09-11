@@ -3,6 +3,7 @@ CRAEFTO FastAPI Application
 Production-ready FastAPI app with async operations, background scheduling, and comprehensive error handling
 """
 import asyncio
+import json
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -41,6 +42,34 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# JSON serialization helper for datetime objects
+def json_serializer(obj):
+    """JSON serializer for objects not serializable by default json code"""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
+
+def safe_json_response(content: Any, status_code: int = 200) -> JSONResponse:
+    """Create JSONResponse with safe datetime serialization"""
+    try:
+        # Convert to JSON string with custom serializer, then back to dict for JSONResponse
+        json_str = json.dumps(content, default=json_serializer)
+        json_content = json.loads(json_str)
+        return JSONResponse(content=json_content, status_code=status_code)
+    except Exception as e:
+        # Fallback: try to convert datetime objects to strings
+        if isinstance(content, dict):
+            safe_content = {}
+            for k, v in content.items():
+                if isinstance(v, datetime):
+                    safe_content[k] = v.isoformat()
+                elif isinstance(v, list):
+                    safe_content[k] = [item.isoformat() if isinstance(item, datetime) else item for item in v]
+                else:
+                    safe_content[k] = v
+            return JSONResponse(content=safe_content, status_code=status_code)
+        return JSONResponse(content={"error": "Serialization error"}, status_code=500)
+
 settings = get_settings()
 
 # Rate limiter setup
@@ -60,6 +89,18 @@ VALID_API_KEYS = {
     "craefto_webhook": "webhook_access"
 }
 
+# Extend with user-provided keys from settings (USER_API_KEYS)
+try:
+    user_keys = settings.get_user_api_keys_list()
+    for k in user_keys:
+        if k and k not in VALID_API_KEYS:
+            VALID_API_KEYS[k] = "user_access"
+    if user_keys:
+        logger.info(f"✅ Loaded {len(user_keys)} user API keys")
+except Exception as e:
+    logger.warning(f"Failed to load user API keys: {e}")
+    pass
+
 # Global state for metrics and status tracking
 app_metrics = {
     "startup_time": datetime.utcnow(),
@@ -71,7 +112,8 @@ app_metrics = {
     "background_tasks_running": 0,
     "research_requests": 0,
     "generation_requests": 0,
-    "publish_requests": 0
+    "publish_requests": 0,
+    "total_processing_time": 0.0
 }
 
 # Request/Response Models
@@ -151,16 +193,17 @@ class WebhookPayload(BaseModel):
     source: str = Field(default="make.com", description="Webhook source")
 
 # Authentication functions
-async def verify_api_key(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
-    """Verify API key from Authorization header"""
-    if not credentials:
+async def verify_api_key(request: Request, credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
+    """Verify API key from Authorization header or x-api-key header"""
+    api_key = credentials.credentials if credentials else None
+    if not api_key:
+        api_key = request.headers.get("x-api-key")
+    if not api_key:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="API key required",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
-    api_key = credentials.credentials
     if api_key not in VALID_API_KEYS:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -247,14 +290,14 @@ class APIResponse(BaseModel):
     success: bool
     message: str
     data: Optional[Dict[str, Any]] = None
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
 class ErrorResponse(BaseModel):
     """Error response model"""
     success: bool = False
     error: str
     detail: Optional[str] = None
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
 # Background task functions
 async def background_research_task():
@@ -928,6 +971,167 @@ async def get_top_performing_endpoint(
             "timestamp": datetime.utcnow().isoformat()
         }
 
+@app.get("/database/content/generated", response_model=Dict[str, Any])
+async def get_generated_content(limit: int = 20, offset: int = 0, content_type: Optional[str] = None):
+    """Get generated content from database with optional filtering"""
+    try:
+        db = get_database()
+        
+        if not db.is_connected:
+            return {
+                "success": False,
+                "error": "Database not connected",
+                "content": [],
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        
+        # Build query filters
+        filters = {}
+        if content_type:
+            filters["content_type"] = content_type
+        
+        # Get generated content with pagination
+        content_records = await db.select(
+            "generated_content", 
+            filters=filters,
+            columns="id, content_type, title, created_at, status, metadata",
+            order_by="created_at DESC",
+            limit=limit,
+            offset=offset
+        )
+        
+        # Get total count for pagination
+        total_count = await db.count("generated_content", filters)
+        
+        # Format the content for frontend
+        formatted_content = []
+        for record in content_records:
+            # Extract content data for better preview (fallback to metadata.content_data)
+            content_data = record.get("content_data", {})
+            metadata = record.get("metadata", {})
+            if not content_data:
+                content_data = metadata.get("content_data", {})
+            
+            # Try to get word count from various sources
+            word_count = 0
+            if metadata.get("word_count"):
+                word_count = metadata.get("word_count")
+            elif content_data.get("blog_post", {}).get("word_count"):
+                word_count = content_data.get("blog_post", {}).get("word_count")
+            elif content_data.get("word_count"):
+                word_count = content_data.get("word_count")
+            elif record.get("body"):
+                word_count = len(record.get("body", "").split())
+            
+            # Try to get image info
+            has_image = False
+            hero_image = content_data.get("hero_image", {})
+            if hero_image.get("primary_url") or hero_image.get("image_url") or (hero_image.get("images") and len(hero_image["images"]) > 0):
+                has_image = True
+            elif metadata.get("image_url"):
+                has_image = True
+            
+            # Try to get platforms
+            platforms = []
+            if content_data.get("social_snippets"):
+                platforms = list(content_data.get("social_snippets", {}).keys())
+            elif metadata.get("platforms"):
+                platforms = list(metadata.get("platforms", []))
+            
+            formatted_content.append({
+                "id": record.get("id"),
+                "content_type": record.get("content_type", "unknown"),
+                "title": record.get("title") or f"Untitled {record.get('content_type', 'content')}",
+                "created_at": record.get("created_at"),
+                "status": record.get("status", "unknown"),
+                "metadata": metadata,
+                "preview": {
+                    "word_count": word_count,
+                    "platforms": platforms,
+                    "has_image": has_image
+                }
+            })
+        
+        return {
+            "success": True,
+            "content": formatted_content,
+            "pagination": {
+                "total": total_count,
+                "limit": limit,
+                "offset": offset,
+                "has_more": offset + limit < total_count
+            },
+            "filters": {
+                "content_type": content_type
+            },
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error getting generated content: {str(e)}")
+        return {
+            "success": False,
+            "error": str(e),
+            "content": [],
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+@app.get("/database/content/{content_id}", response_model=Dict[str, Any])
+async def get_content_details(content_id: str):
+    """Get detailed content data by ID"""
+    try:
+        db = get_database()
+        
+        if not db.is_connected:
+            return {
+                "success": False,
+                "error": "Database not connected",
+                "content": None,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        
+        # Get the specific content record - select all columns to get full data
+        content_records = await db.select("generated_content", "*", {"id": content_id})
+        
+        if not content_records:
+            return {
+                "success": False,
+                "error": "Content not found",
+                "content": None,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        
+        content_record = content_records[0]
+        
+        # Parse the content data (fallback to metadata.content_data for backward compatibility)
+        content_data = content_record.get("content_data", {})
+        if not content_data:
+            meta = content_record.get("metadata", {}) or {}
+            content_data = meta.get("content_data", {}) or {}
+        
+        return {
+            "success": True,
+            "content": {
+                "id": content_record.get("id"),
+                "content_type": content_record.get("content_type"),
+                "title": content_record.get("title"),
+                "created_at": content_record.get("created_at"),
+                "status": content_record.get("status"),
+                "data": content_data,
+                "metadata": content_record.get("metadata", {})
+            },
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error getting content details: {str(e)}")
+        return {
+            "success": False,
+            "error": str(e),
+            "content": None,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
 @app.post("/database/content/publish", response_model=Dict[str, Any])
 async def mark_content_published(request: Dict[str, Any]):
     """Mark content as published and create publication record"""
@@ -1239,8 +1443,8 @@ async def generate_content(request: ContentGenerationRequest):
                 saved_content = await db.save_generated_content({
                     'research_id': research_id,
                     'content_type': request.content_type,
-                    'title': content_data.get('title', f"{request.content_type.title()} about {request.topic}"),
-                    'body': str(content_data.get('content', '')),
+                    'title': generated_content.get('title', f"{request.content_type.title()} about {request.topic}"),
+                    'body': str(generated_content.get('content', '')),
                     'status': 'generated',
                     'metadata': {
                         'original_request': {
@@ -1250,7 +1454,8 @@ async def generate_content(request: ContentGenerationRequest):
                             'tone': request.tone,
                             'word_count': request.word_count
                         },
-                        'ai_generation': content_data.get('metadata', {}),
+                        'ai_generation': generated_content.get('metadata', {}),
+                        'content_data': content_data,
                         'generated_at': datetime.utcnow().isoformat()
                     }
                 })
@@ -1277,7 +1482,7 @@ async def generate_content(request: ContentGenerationRequest):
 @app.post("/generate/visual", response_model=APIResponse)
 async def generate_visual(request: VisualGenerationRequest, background_tasks: BackgroundTasks):
     """
-    Generate visual content via Midjourney or similar AI image generation
+    Generate visual content via Replicate or Pillow fallback
     
     Creates professional visuals for social media, blog posts, and marketing materials
     """
@@ -2083,31 +2288,74 @@ async def research_trending(
         start_time = time.time()
         logger.info(f"🔍 API Research trending request from {auth_level} user")
         
-        # Add to queue for heavy processing
-        request_id = await add_to_queue("research_trending", research_request.dict())
-        
-        # Initialize research agent
-        research_agent = ResearchAgent()
-        
-        # Perform research (current implementation uses predefined sources)
-        trending_data = await research_agent.find_trending_topics()
+        # Check if OpenAI API is available
+        if not settings.openai_api_key:
+            logger.warning("⚠️ OpenAI API key not configured, using mock data")
+            # Return mock trending data for testing
+            trending_data = [
+                {"topic": "AI Automation Tools", "score": 0.95, "source": "mock"},
+                {"topic": "SaaS Design Trends", "score": 0.87, "source": "mock"},
+                {"topic": "No-Code Platforms", "score": 0.82, "source": "mock"}
+            ]
+            content_ideas = [
+                {"topic": "AI Automation Tools", "idea": "How AI is transforming business workflows", "type": "blog"},
+                {"topic": "SaaS Design Trends", "idea": "Top 5 SaaS design patterns for 2024", "type": "listicle"},
+                {"topic": "No-Code Platforms", "idea": "Building apps without coding: A complete guide", "type": "tutorial"}
+            ]
+        else:
+            # Add to queue for heavy processing
+            request_id = await add_to_queue("research_trending", research_request.dict())
+            
+            # Initialize research agent
+            research_agent = ResearchAgent()
+            
+            # Perform research (current implementation uses predefined sources)
+            try:
+                trending_data = await research_agent.find_trending_topics()
+                # Generate content ideas
+                content_ideas = await research_agent.generate_content_ideas(trending_data[:research_request.limit])
+            except Exception as api_error:
+                logger.warning(f"⚠️ Research agent failed: {api_error}, using mock data")
+                trending_data = [
+                    {"topic": "API Error - Mock Data", "score": 0.5, "source": "fallback"},
+                    {"topic": "Testing Mode Active", "score": 0.4, "source": "fallback"}
+                ]
+                content_ideas = [
+                    {"topic": "API Error - Mock Data", "idea": "This is test content for development", "type": "blog"}
+                ]
         
         # Limit results
         limited_data = trending_data[:research_request.limit]
         
-        # Generate content ideas
-        content_ideas = await research_agent.generate_content_ideas(limited_data)
-        
         # Save to database if available
-        db = get_database()
         research_id = None
-        if db:
-            research_id = await db.save_research({
-                "topics": limited_data,
-                "content_ideas": content_ideas,
-                "sources": research_request.sources,
-                "request_id": request_id
-            })
+        try:
+            if settings.supabase_url and settings.supabase_key:
+                db = get_database()
+                if db and db.is_connected:
+                    # Save each trending topic individually
+                    saved_topics = []
+                    for topic_data in limited_data[:3]:  # Save top 3 topics
+                        if topic_data.get('topic'):  # Only save if topic exists
+                            research_record = await db.save_research({
+                                'topic': topic_data.get('topic'),
+                                'relevance_score': min(topic_data.get('relevance_score', 0) / 100, 1.0),
+                                'source': topic_data.get('source'),
+                                'data': {
+                                    'context': topic_data.get('context'),
+                                    'content_angle': topic_data.get('content_angle'),
+                                    'raw_score': topic_data.get('relevance_score', 0),
+                                    'craefto_boost': topic_data.get('craefto_boost', 0),
+                                    'research_timestamp': datetime.utcnow().isoformat()
+                                }
+                            })
+                            saved_topics.append(research_record.get('id'))
+                    research_id = saved_topics[0] if saved_topics else None
+                    logger.info(f"💾 Saved {len(saved_topics)} research records to database")
+            else:
+                logger.info("📝 Database not configured, skipping data save")
+        except Exception as db_error:
+            logger.warning(f"⚠️ Database save failed: {db_error}, continuing without save")
         
         processing_time = time.time() - start_time
         
@@ -2125,12 +2373,12 @@ async def research_trending(
         app_metrics["research_requests"] += 1
         app_metrics["successful_requests"] += 1
         
-        return get_consistent_response(
-            success=True,
-            message=f"Research completed: {len(limited_data)} trending topics found",
-            data=response_data,
-            request_id=request_id
-        )
+        return safe_json_response({
+            "success": True,
+            "message": f"Research completed: {len(limited_data)} trending topics found",
+            "data": response_data,
+            "request_id": request_id
+        })
         
     except Exception as e:
         app_metrics["failed_requests"] += 1
@@ -2204,21 +2452,43 @@ async def generate_blog(
             segment="blog_readers"
         )
         
-        # Save to database
+        # Save to database (normalized shape)
         db = get_database()
         content_id = None
         if db:
-            content_id = await db.save_generated_content({
-                "type": "blog_post",
-                "topic": blog_request.topic,
-                "content": blog_content,
-                "social_snippets": social_content,
-                "email_version": email_content,
-                "hero_image": hero_image,
-                "research_id": blog_request.research_id,
-                "style": blog_request.style,
-                "request_id": request_id
-            })
+            try:
+                content_data = {
+                    "blog_post": blog_content,
+                    "social_snippets": social_content,
+                    "email_version": email_content,
+                    "hero_image": hero_image,
+                }
+                saved_content = await db.save_generated_content({
+                    'research_id': blog_request.research_id,
+                    'content_type': 'blog',
+                    'title': blog_content.get('title') or blog_request.topic,
+                    'body': str(blog_content.get('content', '')),
+                    'status': 'generated',
+                    'metadata': {
+                        'original_request': {
+                            'topic': blog_request.topic,
+                            'content_type': 'blog',
+                            'style': blog_request.style,
+                            'seo_keywords': blog_request.seo_keywords,
+                            'include_hero_image': blog_request.include_hero_image,
+                        },
+                        'seo': {
+                            'meta_description': blog_content.get('meta_description'),
+                            'word_count': len(blog_content.get('content', '').split()),
+                        },
+                        'content_data': content_data,
+                        'generated_at': datetime.utcnow().isoformat(),
+                        'request_id': request_id,
+                    }
+                })
+                content_id = saved_content.get('id') if isinstance(saved_content, dict) else saved_content
+            except Exception as e:
+                logger.error(f"❌ Database save failed: {str(e)}")
         
         processing_time = time.time() - start_time
         
@@ -2252,6 +2522,143 @@ async def generate_blog(
         return get_consistent_response(
             success=False,
             message="Blog generation failed",
+            errors=[str(e)],
+            request_id=request_id if 'request_id' in locals() else None
+        )
+
+@app.post("/api/generate/social")
+@limiter.limit("10/minute")
+async def generate_social(
+    request: Request,
+    social_request: BlogGenerationRequest,  # Reusing the same request model
+    auth_level: str = Depends(verify_api_key)
+):
+    """
+    Generate social media content with:
+    - Platform-specific posts
+    - Hashtags and mentions
+    - Visual suggestions
+    """
+    try:
+        start_time = time.time()
+        
+        # Debug logging
+        logger.info(f"🔍 Content-Type: {request.headers.get('content-type')}")
+        logger.info(f"🔍 Request method: {request.method}")
+        logger.info(f"🔍 Request URL: {request.url}")
+        logger.info(f"🔍 Parsed request: {social_request}")
+        
+        logger.info(f"📱 API Social generation request: {social_request.topic}")
+        
+        # Add to queue for heavy processing
+        request_id = await add_to_queue("generate_social", social_request.dict())
+        
+        # Initialize generators
+        content_generator = ContentGenerator()
+        visual_generator = VisualGenerator()
+        
+        # Get research data if provided
+        research_data = None
+        if social_request.research_id:
+            db = get_database()
+            if db:
+                research_data = await db.get_research_by_id(social_request.research_id)
+        
+        # Generate social content
+        social_content = await content_generator.generate_social_posts(
+            topic=social_request.topic,
+            blog_content=None  # We can add blog content reference later if needed
+        )
+        
+        # Generate visual if requested
+        visual_asset = None
+        if social_request.include_hero_image:
+            try:
+                # Generate social graphics for the first platform available
+                platforms = list(social_content.get("platforms", {}).keys())
+                if platforms:
+                    platform = platforms[0]  # Use first platform
+                    visual_result = await visual_generator.generate_social_graphics(
+                        text=social_request.topic,
+                        platform=platform
+                    )
+                    if visual_result.get("success"):
+                        visual_asset = visual_result.get("data")
+            except Exception as e:
+                logger.warning(f"⚠️ Visual generation failed: {str(e)}")
+        
+        # Save to database
+        db = get_database()
+        research_id = None
+        saved_content = None
+        
+        if db:
+            try:
+                # Save research if we have it
+                if research_data:
+                    research_id = await db.save_research({
+                        'topic': social_request.topic,
+                        'research_data': research_data,
+                        'status': 'completed'
+                    })
+                
+                # Save generated content
+                content_data = {
+                    "platforms": social_content.get("platforms", {}),
+                    "hashtags": social_content.get("hashtags", []),
+                    "mentions": social_content.get("mentions", []),
+                    "metadata": social_content.get("metadata", {})
+                }
+                
+                if visual_asset:
+                    content_data["visual_asset"] = visual_asset
+                
+                saved_content = await db.save_generated_content({
+                    'research_id': research_id,
+                    'content_type': 'social',
+                    'title': f"Social content for {social_request.topic}",
+                    'body': str(social_content.get('content', '')),
+                    'status': 'generated',
+                    'metadata': {
+                        'original_request': {
+                            'topic': social_request.topic,
+                            'content_type': 'social',
+                            'target_audience': social_request.target_audience,
+                            'style': social_request.style,
+                            'include_hero_image': social_request.include_hero_image
+                        },
+                        'ai_generation': social_content.get('metadata', {}),
+                        'content_data': content_data,
+                        'generated_at': datetime.utcnow().isoformat()
+                    }
+                })
+                
+            except Exception as e:
+                logger.error(f"❌ Database save failed: {str(e)}")
+        
+        # Update metrics
+        app_metrics["successful_requests"] += 1
+        app_metrics["total_processing_time"] += time.time() - start_time
+        
+        return get_consistent_response(
+            success=True,
+            message="Social content generated successfully",
+            data={
+                "content": social_content,
+                "visual_asset": visual_asset,
+                "research_id": research_id,
+                "content_id": saved_content.get("id") if saved_content else None,
+                "processing_time": round(time.time() - start_time, 2)
+            },
+            request_id=request_id
+        )
+        
+    except Exception as e:
+        app_metrics["failed_requests"] += 1
+        logger.error(f"❌ API Social generation failed: {str(e)}")
+        return get_consistent_response(
+            success=False,
+            message="Social generation failed",
             errors=[str(e)],
             request_id=request_id if 'request_id' in locals() else None
         )

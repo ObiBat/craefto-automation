@@ -2,6 +2,7 @@
 Configuration settings for CRAEFTO automation system
 """
 import os
+import json
 from pydantic_settings import BaseSettings
 from pydantic import Field, validator
 from typing import Optional, List, Dict, Any
@@ -24,35 +25,45 @@ class Settings(BaseSettings):
         env="ANTHROPIC_API_KEY"
     )
     
-    # Visual Generation
-    midjourney_webhook: str = Field(
+    # Visual Generation (Replicate)
+    replicate_api_token: str = Field(
         default="",
-        description="Discord bot or proxy webhook URL for Midjourney image generation",
-        env="MIDJOURNEY_WEBHOOK"
+        description="Replicate API token for image generation",
+        env="REPLICATE_API_TOKEN"
+    )
+    replicate_model: str = Field(
+        default="bytedance/seedream-4",
+        description="Replicate model name (e.g., bytedance/seedream-4)",
+        env="REPLICATE_MODEL"
+    )
+    replicate_model_version: str = Field(
+        default="",
+        description="Replicate model version (exact version id for deterministic runs)",
+        env="REPLICATE_MODEL_VERSION"
     )
     
     # Twitter/X API Configuration
     twitter_api_key: str = Field(
         default="",
-        description="Twitter API Key (Consumer Key)",
+        description="Twitter API key",
         env="TWITTER_API_KEY"
     )
     
     twitter_api_secret: str = Field(
         default="",
-        description="Twitter API Secret (Consumer Secret)",
+        description="Twitter API secret",
         env="TWITTER_API_SECRET"
     )
     
     twitter_access_token: str = Field(
         default="",
-        description="Twitter Access Token",
+        description="Twitter access token",
         env="TWITTER_ACCESS_TOKEN"
     )
     
     twitter_access_secret: str = Field(
         default="",
-        description="Twitter Access Token Secret",
+        description="Twitter access token secret",
         env="TWITTER_ACCESS_SECRET"
     )
     
@@ -65,7 +76,7 @@ class Settings(BaseSettings):
     
     supabase_key: str = Field(
         default="",
-        description="Supabase API key (anon/service_role)",
+        description="Supabase service role key",
         env="SUPABASE_KEY"
     )
     
@@ -219,10 +230,10 @@ class Settings(BaseSettings):
         env="CONVERTKIT_RATE_LIMIT"
     )
     
-    midjourney_rate_limit: int = Field(
-        default=5,
-        description="Midjourney API calls per minute",
-        env="MIDJOURNEY_RATE_LIMIT"
+    replicate_rate_limit: int = Field(
+        default=20,
+        description="Replicate API calls per minute",
+        env="REPLICATE_RATE_LIMIT"
     )
     
     make_webhook_rate_limit: int = Field(
@@ -425,6 +436,11 @@ class Settings(BaseSettings):
     )
     
     # Security & Performance
+    user_api_keys: str = Field(
+        default="",
+        description="Additional API keys allowed for user access (comma-separated)",
+        env="USER_API_KEYS"
+    )
     secret_key: str = Field(
         default="your-secret-key-here-change-in-production",
         description="Secret key for JWT tokens and encryption",
@@ -469,6 +485,13 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             return [origin.strip() for origin in v.split(',')]
         return v
+
+    def get_user_api_keys_list(self) -> List[str]:
+        """Parse user_api_keys string into a list"""
+        if not self.user_api_keys:
+            return []
+        return [k.strip() for k in self.user_api_keys.split(',') if k.strip()]
+
     
     @validator('max_retries')
     def validate_max_retries(cls, v):
@@ -546,7 +569,7 @@ class Settings(BaseSettings):
             ]),
             "supabase": bool(self.supabase_url and self.supabase_key),
             "convertkit": bool(self.convertkit_api_key),
-            "midjourney": bool(self.midjourney_webhook),
+            "replicate": bool(self.replicate_api_token),
             "make": bool(self.make_webhook_url)
         }
     
@@ -636,7 +659,7 @@ Logo: Text-based "{self.logo_symbol}" symbol
             "linkedin": self.linkedin_rate_limit,
             "supabase": self.supabase_rate_limit,
             "convertkit": self.convertkit_rate_limit,
-            "midjourney": self.midjourney_rate_limit,
+            "replicate": self.replicate_rate_limit,
             "make_webhook": self.make_webhook_rate_limit,
             "global_fallback": self.rate_limit_per_minute
         }
@@ -742,9 +765,9 @@ Logo: Text-based "{self.logo_symbol}" symbol
                 "rate_limit": self.convertkit_rate_limit,
                 "critical": False
             },
-            "midjourney": {
+            "replicate": {
                 "timeout": 60,
-                "rate_limit": self.midjourney_rate_limit,
+                "rate_limit": self.replicate_rate_limit,
                 "critical": False
             },
             "make_webhook": {
@@ -771,6 +794,7 @@ Logo: Text-based "{self.logo_symbol}" symbol
         env_file_encoding = "utf-8"
         case_sensitive = False
         validate_assignment = True
+        extra = "ignore"  # Ignore extra fields to prevent validation errors
 
 
 # Global settings instance

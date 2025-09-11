@@ -18,7 +18,7 @@ This guide covers deploying the CRAEFTO Automation Platform to production enviro
 - **Twitter API Keys** (Social publishing)
 - **LinkedIn API Keys** (Social publishing)
 - **ConvertKit API Key** (Email campaigns)
-- **Midjourney Webhook** (Image generation)
+- **Replicate API Token** (Image generation)
 
 ## 🏗️ Deployment Options
 

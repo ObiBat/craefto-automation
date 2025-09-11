@@ -84,21 +84,7 @@ class SupabaseClient:
             # Create Supabase client with enhanced configuration
             self._client = create_client(
                 self.settings.supabase_url,
-                self.settings.supabase_key,
-                options={
-                    'db': {
-                        'schema': 'public'
-                    },
-                    'auth': {
-                        'auto_refresh_token': True,
-                        'persist_session': True
-                    },
-                    'global': {
-                        'headers': {
-                            'x-client-info': 'craefto-automation/1.0.0'
-                        }
-                    }
-                }
+                self.settings.supabase_key
             )
             
             # Test connection with retry logic
@@ -214,7 +200,7 @@ class SupabaseClient:
             raise QueryError(f"Insert failed: {str(e)}")
     
     async def select(self, table: str, columns: str = "*", filters: Optional[Dict[str, Any]] = None, 
-                    limit: Optional[int] = None, order_by: Optional[str] = None) -> List[Dict[str, Any]]:
+                    limit: Optional[int] = None, offset: Optional[int] = None, order_by: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         Select data from table
         
@@ -223,6 +209,7 @@ class SupabaseClient:
             columns: Columns to select (default: "*")
             filters: Filter conditions
             limit: Maximum number of records
+            offset: Number of records to skip
             order_by: Order by column
             
         Returns:
@@ -248,12 +235,20 @@ class SupabaseClient:
             
             # Apply ordering
             if order_by:
-                desc = order_by.startswith('-')
-                column = order_by.lstrip('-')
-                query = query.order(column, desc=desc)
+                if ' DESC' in order_by.upper():
+                    column = order_by.replace(' DESC', '').replace(' desc', '')
+                    query = query.order(column, desc=True)
+                elif ' ASC' in order_by.upper():
+                    column = order_by.replace(' ASC', '').replace(' asc', '')
+                    query = query.order(column, desc=False)
+                else:
+                    # Default to ascending
+                    query = query.order(order_by, desc=False)
             
-            # Apply limit
-            if limit:
+            # Apply offset
+            if offset:
+                query = query.range(offset, offset + (limit or 1000) - 1)
+            elif limit:
                 query = query.limit(limit)
             
             result = query.execute()
@@ -267,6 +262,48 @@ class SupabaseClient:
         except Exception as e:
             logger.error(f"❌ Error selecting from {table}: {str(e)}")
             raise QueryError(f"Select failed: {str(e)}")
+    
+    async def count(self, table: str, filters: Optional[Dict[str, Any]] = None) -> int:
+        """
+        Count records in table
+        
+        Args:
+            table: Table name
+            filters: Filter conditions
+            
+        Returns:
+            Number of records
+        """
+        self.ensure_connection()
+        
+        try:
+            logger.debug(f"🔢 Counting records in {table} with filters: {filters}")
+            
+            query = self._client.table(table).select("id", count="exact")
+            
+            # Apply filters
+            if filters:
+                for key, value in filters.items():
+                    if isinstance(value, dict):
+                        # Handle complex filters like {"gte": 10}
+                        for op, val in value.items():
+                            query = getattr(query, op)(key, val)
+                    else:
+                        # Simple equality filter
+                        query = query.eq(key, value)
+            
+            result = query.execute()
+            
+            count = result.count if hasattr(result, 'count') else len(result.data)
+            logger.info(f"✅ Counted {count} records in {table}")
+            return count
+            
+        except APIError as e:
+            logger.error(f"❌ API Error counting {table}: {str(e)}")
+            raise QueryError(f"Count failed: {str(e)}")
+        except Exception as e:
+            logger.error(f"❌ Error counting {table}: {str(e)}")
+            raise QueryError(f"Count failed: {str(e)}")
     
     async def update(self, table: str, data: Dict[str, Any], filters: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
